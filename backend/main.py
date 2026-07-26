@@ -1,6 +1,7 @@
 import os
 import requests
 from datetime import datetime
+import zoneinfo
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -26,7 +27,7 @@ class ChatRequest(BaseModel):
 def get_weather(lat: float, lon: float):
     try:
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
-        res = requests.get(url).json()
+        res = requests.get(url, timeout=5).json()
         temp = res["current_weather"]["temperature"]
         wind = res["current_weather"]["windspeed"]
         return f"Aktuelle Temperatur: {temp}°C, Windgeschwindigkeit: {wind} km/h."
@@ -41,24 +42,26 @@ def home():
 async def chat(req: ChatRequest):
     user_msg = req.message
     
-    # 1. Aktuelles Datum und Uhrzeit ermitteln
+    # 1. Aktuelles Datum und Uhrzeit in deutscher Zeitzone (Europe/Berlin)
     wochentage = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
-    jetzt = datetime.now()
+    tz = zoneinfo.ZoneInfo("Europe/Berlin")
+    jetzt = datetime.now(tz)
+    
     aktueller_tag = wochentage[jetzt.weekday()]
-    datum_uhrzeit_str = f"Heute ist {aktueller_tag}, der {jetzt.strftime('%d.%m.%Y')}, aktuelle Uhrzeit: {jetzt.strftime('%H:%M')} Uhr."
+    datum_uhrzeit_str = f"Heute ist {aktueller_tag}, der {jetzt.strftime('%d.%m.%Y')}, aktuelle Uhrzeit in Deutschland: {jetzt.strftime('%H:%M')} Uhr."
 
-    # 2. Wetterdaten abrufen, wenn nach Wetter/Temperatur/Regen gefragt wird
+    # 2. Wetterdaten abrufen
     weather_info = ""
     keywords_wetter = ["wetter", "regen", "temperatur", "grad", "sonne", "kalt", "warm"]
     if any(kw in user_msg.lower() for kw in keywords_wetter):
         if req.locationAllowed and req.coords:
             lat = req.coords.get("lat")
             lon = req.coords.get("lon")
-            weather_info = f"\nSystem-Info zum Wetter am Standort des Nutzers: {get_weather(lat, lon)}"
+            weather_info = f"\nSystem-Info zum Live-Wetter am Standort des Nutzers: {get_weather(lat, lon)}"
         else:
-            weather_info = "\nSystem-Info: Der Nutzer hat den Standort in der App noch nicht freigegeben."
+            weather_info = "\nSystem-Info: Der GPS-Standort wurde vom Nutzer in der App bisher nicht übermittelt."
 
-    # 3. System-Prompt definieren (mit Datum & Uhrzeit)
+    # 3. System-Prompt für Titan
     system_instruction = (
         "Du bist TITAN, ein hochintelligenter, höflicher und effizienter KI-Sprachassistent. "
         "Du sprichst den Nutzer immer höflich mit 'Sir' an. "
@@ -68,7 +71,7 @@ async def chat(req: ChatRequest):
 
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        return {"reply": "Sir, der GROQ_API_KEY ist auf Render noch nicht eingetragen."}
+        return {"reply": "Sir, der GROQ_API_KEY fehlt noch auf Render."}
 
     try:
         client = Groq(api_key=api_key)
