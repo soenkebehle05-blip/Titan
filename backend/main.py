@@ -1,5 +1,6 @@
 import os
 import requests
+from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -30,7 +31,7 @@ def get_weather(lat: float, lon: float):
         wind = res["current_weather"]["windspeed"]
         return f"Aktuelle Temperatur: {temp}°C, Windgeschwindigkeit: {wind} km/h."
     except Exception:
-        return "Wetterdaten konnten nicht abgerufen werden."
+        return "Wetterdaten konnten zurzeit nicht abgerufen werden."
 
 @app.get("/")
 def home():
@@ -40,24 +41,34 @@ def home():
 async def chat(req: ChatRequest):
     user_msg = req.message
     
+    # 1. Aktuelles Datum und Uhrzeit ermitteln
+    wochentage = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+    jetzt = datetime.now()
+    aktueller_tag = wochentage[jetzt.weekday()]
+    datum_uhrzeit_str = f"Heute ist {aktueller_tag}, der {jetzt.strftime('%d.%m.%Y')}, aktuelle Uhrzeit: {jetzt.strftime('%H:%M')} Uhr."
+
+    # 2. Wetterdaten abrufen, wenn nach Wetter/Temperatur/Regen gefragt wird
     weather_info = ""
-    if ("wetter" in user_msg.lower() or "regen" in user_msg.lower() or "temperatur" in user_msg.lower()):
+    keywords_wetter = ["wetter", "regen", "temperatur", "grad", "sonne", "kalt", "warm"]
+    if any(kw in user_msg.lower() for kw in keywords_wetter):
         if req.locationAllowed and req.coords:
             lat = req.coords.get("lat")
             lon = req.coords.get("lon")
-            weather_info = f"\nSystem-Zusatzinfo zum Wetter am Standort: {get_weather(lat, lon)}"
+            weather_info = f"\nSystem-Info zum Wetter am Standort des Nutzers: {get_weather(lat, lon)}"
         else:
-            weather_info = "\nSystem-Zusatzinfo: GPS ist deaktiviert."
+            weather_info = "\nSystem-Info: Der Nutzer hat den Standort in der App noch nicht freigegeben."
 
+    # 3. System-Prompt definieren (mit Datum & Uhrzeit)
     system_instruction = (
-        "Du bist TITAN, ein hochintelligenter, höflicher KI-Sprachassistent. "
+        "Du bist TITAN, ein hochintelligenter, höflicher und effizienter KI-Sprachassistent. "
         "Du sprichst den Nutzer immer höflich mit 'Sir' an. "
-        "Halte deine Antworten kurz, prägnant und perfekt für die Sprachausgabe."
+        "Halte deine Antworten eher kurz, prägnant und ideal für die Sprachausgabe geeignet.\n"
+        f"Echtzeit-Kontext: {datum_uhrzeit_str}"
     )
 
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        return {"reply": "Sir, der GROQ_API_KEY fehlt noch auf Render."}
+        return {"reply": "Sir, der GROQ_API_KEY ist auf Render noch nicht eingetragen."}
 
     try:
         client = Groq(api_key=api_key)
