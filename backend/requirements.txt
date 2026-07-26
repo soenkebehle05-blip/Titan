@@ -1,6 +1,5 @@
 fastapi
 uvicorn
 requests
-google-generativeai
-groq
+google-genai
 pydantic
