@@ -104,7 +104,8 @@
     </footer>
 
     <script>
-        // BACKEND URL const BACKEND_URL = "https://titan-q6vn.onrender.com/api/chat";
+        // BACKEND URL
+        const BACKEND_URL = "https://titan-q6vn.onrender.com/api/chat";
         
         let recognition = null;
         let currentPin = "";
@@ -232,7 +233,7 @@
                 speak(reply);
 
             } catch (err) {
-                const reply = "Titan verarbeitet deine Anfrage...";
+                const reply = "Sir, der Server antwortet gerade nicht. Bitte versuche es kurz erneut.";
                 addBubble(reply, 'titan-msg');
                 saveToHistory("Titan: " + reply);
                 speak(reply);
