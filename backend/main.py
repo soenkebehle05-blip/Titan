@@ -55,7 +55,7 @@ async def chat(req: ChatRequest):
     # 2. System-Prompt für Titan definieren
     system_instruction = (
         "Du bist TITAN, ein hochintelligenter, höflicher und effizienter KI-Sprachassistent. "
-        "Du sprichst den Nutzer immer höflich mit 'Sir' an (oder passe es je nach Tonfall an). "
+        "Du sprichst den Nutzer immer höflich mit 'Sir' an. "
         "Halte deine Antworten eher kurz, prägnant und ideal für die Sprachausgabe geeignet."
     )
 
@@ -69,8 +69,9 @@ async def chat(req: ChatRequest):
         client = genai.Client(api_key=api_key)
         prompt = f"{system_instruction}\n{weather_info}\n\nNutzer-Nachricht: {user_msg}"
         
+        # Hier ist die Korrektur: gemini-1.5-flash statt 2.5-flash
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
         )
         reply = response.text
