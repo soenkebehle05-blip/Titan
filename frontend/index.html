@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Titan Assistent</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+        body { background-color: #0f172a; color: #f8fafc; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* POPUP & LOGIN SCREENS */
+        .modal-screen { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.95); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+        .card { background: #1e293b; padding: 30px; border-radius: 16px; border: 1px solid #334155; width: 100%; max-width: 350px; text-align: center; }
+        .card h2, .card h3 { color: #38bdf8; margin-bottom: 15px; }
+        .card input { width: 100%; padding: 12px; margin-bottom: 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: white; }
+        
+        .btn-primary { width: 100%; padding: 12px; border-radius: 8px; border: none; background: #38bdf8; color: #0f172a; font-weight: bold; cursor: pointer; margin-top: 5px; }
+        .btn-secondary { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: white; font-weight: bold; cursor: pointer; margin-top: 8px; }
+
+        /* HEADER & MENÜ */
+        header { padding: 16px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; align-items: center; }
+        .menu-btn { background: none; border: none; color: #38bdf8; font-size: 24px; cursor: pointer; margin-right: 15px; }
+        .header-title { font-weight: bold; color: #38bdf8; letter-spacing: 1px; }
+
+        /* SIDEBAR / MENÜ FENSTER */
+        #sidebar { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.98); z-index: 90; padding: 25px; flex-direction: column; gap: 20px; overflow-y: auto; }
+        .sidebar-section { background: #1e293b; padding: 15px; border-radius: 12px; border: 1px solid #334155; }
+        .sidebar-section h4 { color: #38bdf8; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+        .clickable-status { cursor: pointer; user-select: none; transition: 0.2s; }
+        .clickable-status:hover { opacity: 0.8; }
+        
+        .close-btn { background: #ef4444; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: auto; }
+        .status-green { color: #22c55e; font-weight: bold; }
+        .status-red { color: #ef4444; font-weight: bold; }
+
+        /* CHAT BEREICH */
+        #chat-container { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .msg { max-width: 80%; padding: 12px 16px; border-radius: 12px; line-height: 1.4; word-wrap: break-word; }
+        .user-msg { background: #0284c7; align-self: flex-end; color: white; }
+        .titan-msg { background: #1e293b; border: 1px solid #334155; align-self: flex-start; color: #f8fafc; }
+
+        /* LEISTE UNTEN */
+        footer { padding: 12px; background: #1e293b; border-top: 1px solid #334155; display: flex; align-items: center; gap: 10px; }
+        .icon-btn { background: #0f172a; border: 1px solid #334155; color: #f8fafc; border-radius: 50%; width: 46px; height: 46px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 20px; flex-shrink: 0; }
+        .icon-btn.recording { background: #ef4444; color: white; animation: pulse 1s infinite; }
+        #text-input { flex: 1; padding: 12px 16px; border-radius: 20px; border: 1px solid #334155; background: #0f172a; color: white; outline: none; font-size: 15px; }
+
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.08); } 100% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen" class="modal-screen">
+        <div class="card">
+            <h2>Titan Login</h2>
+            <input type="password" id="password" placeholder="Passwort / PIN eingeben">
+            <button class="btn-primary" onclick="login()">Anmelden</button>
+        </div>
+    </div>
+
+    <div id="location-modal" class="modal-screen" style="display: none;">
+        <div class="card">
+            <h3>Standort-Freigabe</h3>
+            <p style="font-size: 14px; color: #cbd5e1; margin-bottom: 20px;">Darf Titan deinen Standort verwenden, um präzise Baustellen- und Wetterdaten abzurufen?</p>
+            <button class="btn-primary" onclick="setLocationPermission(true)">Ja (Standort erlauben)</button>
+            <button class="btn-secondary" onclick="setLocationPermission(false)">Nein (Deaktivieren)</button>
+        </div>
+    </div>
+
+    <div id="sidebar">
+        <h2 style="color: #38bdf8;">Menü</h2>
+        
+        <div class="sidebar-section">
+            <h4>👤 Profil</h4>
+            <p id="user-pin-display">Angemeldet mit PIN: -</p>
+        </div>
+
+        <div class="sidebar-section clickable-status" onclick="toggleLocationStatus()">
+            <h4>📍 Standort <span style="font-size: 12px; color: #94a3b8;">(Tippen zum Ändern)</span></h4>
+            <p id="location-status-text" class="status-red">✗ GPS-Standort deaktiviert</p>
+        </div>
+
+        <div class="sidebar-section">
+            <h4>📜 Verlauf</h4>
+            <div id="history-content" style="max-height: 150px; overflow-y: auto; font-size: 14px; color: #cbd5e1;">Kein Verlauf vorhanden.</div>
+        </div>
+
+        <button class="close-btn" onclick="toggleSidebar(false)">Schließen</button>
+    </div>
+
+    <header>
+        <button class="menu-btn" onclick="toggleSidebar(true)">☰</button>
+        <span class="header-title">TITAN</span>
+    </header>
+
+    <div id="chat-container">
+        <div class="msg titan-msg" id="welcome-msg">Wird geladen...</div>
+    </div>
+
+    <footer>
+        <button class="icon-btn" id="mic-btn" onclick="toggleMic()">🎙️</button>
+        <input type="text" id="text-input" placeholder="Sprechen oder schreiben..." onkeypress="handleKey(event)">
+        <button class="icon-btn" id="send-btn" onclick="sendMsg()">✈️</button>
+    </footer>
+
+    <script>
+        // BACKEND URL const BACKEND_URL = "https://titan-q6vn.onrender.com/api/chat";
+        const BACKEND_URL = "/api/chat";
+        
+        let recognition = null;
+        let currentPin = "";
+        let locationAllowed = false;
+        let userCoords = null;
+
+        function getGreeting() {
+            const hour = new Date().getHours();
+            if (hour >= 5 && hour < 11) return "Guten Morgen, Sir. Titan steht bereit.";
+            if (hour >= 11 && hour < 18) return "Guten Tag, Sir. Titan steht bereit.";
+            return "Guten Abend, Sir. Titan steht bereit.";
+        }
+
+        function login() {
+            const pass = document.getElementById('password').value;
+            if (pass.length > 0) {
+                currentPin = pass;
+                document.getElementById('user-pin-display').innerText = "Angemeldet mit PIN: " + currentPin;
+                document.getElementById('login-screen').style.display = 'none';
+                document.getElementById('location-modal').style.display = 'flex';
+            } else {
+                alert("Bitte gib deine PIN ein!");
+            }
+        }
+
+        function setLocationPermission(allowed) {
+            document.getElementById('location-modal').style.display = 'none';
+            document.getElementById('welcome-msg').innerText = getGreeting();
+            updateLocationUI(allowed);
+            initApp();
+        }
+
+        function toggleLocationStatus() {
+            updateLocationUI(!locationAllowed);
+        }
+
+        function updateLocationUI(allowed) {
+            locationAllowed = allowed;
+            const statusElem = document.getElementById('location-status-text');
+            if (locationAllowed) {
+                statusElem.className = "status-green";
+                statusElem.innerText = "✓ GPS-Standort aktiv";
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition((pos) => {
+                        userCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+                    }, () => {});
+                }
+            } else {
+                statusElem.className = "status-red";
+                statusElem.innerText = "✗ GPS-Standort deaktiviert";
+                userCoords = null;
+            }
+        }
+
+        function initApp() {
+            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                const SpeechClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+                recognition = new SpeechClass();
+                recognition.lang = 'de-DE';
+                recognition.interimResults = false;
+
+                recognition.onresult = (e) => {
+                    const text = e.results[0][0].transcript;
+                    document.getElementById('text-input').value = text;
+                    toggleMicUI(false);
+                    sendMsg();
+                };
+
+                recognition.onerror = () => toggleMicUI(false);
+                recognition.onend = () => toggleMicUI(false);
+            }
+        }
+
+        function toggleMic() {
+            if (!recognition) return alert("Mikrofon wird im Browser nicht unterstützt.");
+            const btn = document.getElementById('mic-btn');
+            if (btn.classList.contains('recording')) {
+                recognition.stop();
+                toggleMicUI(false);
+            } else {
+                recognition.start();
+                toggleMicUI(true);
+            }
+        }
+
+        function toggleMicUI(isRec) {
+            const btn = document.getElementById('mic-btn');
+            if (isRec) btn.classList.add('recording');
+            else btn.classList.remove('recording');
+        }
+
+        function handleKey(e) { if (e.key === 'Enter') sendMsg(); }
+
+        async function sendMsg() {
+            const input = document.getElementById('text-input');
+            const txt = input.value.trim();
+            if (!txt) return;
+
+            addBubble(txt, 'user-msg');
+            saveToHistory("User: " + txt);
+            input.value = '';
+
+            try {
+                const response = await fetch(BACKEND_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: txt,
+                        pin: currentPin,
+                        locationAllowed: locationAllowed,
+                        coords: userCoords
+                    })
+                });
+
+                let reply = "";
+                if (response.ok) {
+                    const data = await response.json();
+                    reply = data.reply || data;
+                } else {
+                    reply = "Sir, es gab ein Verbindungsproblem zum Titan-Server.";
+                }
+
+                addBubble(reply, 'titan-msg');
+                saveToHistory("Titan: " + reply);
+                speak(reply);
+
+            } catch (err) {
+                const reply = "Titan verarbeitet deine Anfrage...";
+                addBubble(reply, 'titan-msg');
+                saveToHistory("Titan: " + reply);
+                speak(reply);
+            }
+        }
+
+        function addBubble(text, cls) {
+            const box = document.getElementById('chat-container');
+            const div = document.createElement('div');
+            div.className = 'msg ' + cls;
+            div.innerText = text;
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function speak(text) {
+            if ('speechSynthesis' in window) {
+                const utt = new SpeechSynthesisUtterance(text);
+                utt.lang = 'de-DE';
+                window.speechSynthesis.speak(utt);
+            }
+        }
+
+        function saveToHistory(text) {
+            let history = JSON.parse(localStorage.getItem('titan_history') || '[]');
+            history.push(new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) + " - " + text);
+            localStorage.setItem('titan_history', JSON.stringify(history));
+        }
+
+        function toggleSidebar(show) {
+            const sidebar = document.getElementById('sidebar');
+            if (show) {
+                let history = JSON.parse(localStorage.getItem('titan_history') || '[]');
+                document.getElementById('history-content').innerHTML = history.length > 0 ? history.join('<br><br>') : 'Noch kein Verlauf vorhanden.';
+                sidebar.style.display = 'flex';
+            } else {
+                sidebar.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
