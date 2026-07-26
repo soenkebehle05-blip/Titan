@@ -69,9 +69,9 @@ async def chat(req: ChatRequest):
         client = genai.Client(api_key=api_key)
         prompt = f"{system_instruction}\n{weather_info}\n\nNutzer-Nachricht: {user_msg}"
         
-        # Hier ist die Korrektur: gemini-1.5-flash statt 2.5-flash
+        # Aktualisiertes Modell: gemini-2.0-flash
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.0-flash',
             contents=prompt,
         )
         reply = response.text
