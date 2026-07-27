@@ -26,7 +26,7 @@ class ChatRequest(BaseModel):
     coords: Optional[Dict[str, float]] = None
 
 # ---------------------------------------------------------
-# Notion Integration (Schreibt direkt auf die Seite "Titan")
+# Notion Integration
 # ---------------------------------------------------------
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
@@ -57,7 +57,6 @@ def eintrag_erstellen(titel: str):
     clean_id = extract_notion_id(NOTION_DATABASE_ID)
     url_block = f"https://api.notion.com/v1/blocks/{clean_id}/children"
     
-    # Fügt eine To-Do-Zeile direkt auf der Notion-Seite ein
     payload = {
         "children": [
             {
@@ -106,7 +105,6 @@ def eintraege_auslesen():
         eintraege = []
         for block in results:
             b_type = block.get("type")
-            # Liest To-Do-Blöcke und Bullet-Points aus
             if b_type in ["to_do", "bulleted_list_item", "paragraph"]:
                 texts = block.get(b_type, {}).get("rich_text", [])
                 if texts:
@@ -195,15 +193,16 @@ async def chat(req: ChatRequest):
         else:
             weather_info = "GPS-Standort deaktiviert."
 
-    # 4. System-Prompt für Titan
+    # 4. System-Prompt für Titan (Optimiert gegen ungefragte Zeitangaben)
     system_instruction = (
         "Du bist TITAN, ein hochintelligenter Sprachassistent. "
-        "Platziere die Anrede 'Sir' AUSNAHMSLOS AN DEN ANFANG deiner Antwort (z. B. 'Sir, es ist...'). "
+        "Platziere die Anrede 'Sir' AUSNAHMSLOS AN DEN ANFANG deiner Antwort (z. B. 'Sir, ...'). "
         "Antworte EXTREM KURZ UND DIREKT IN EINEM EINZIGEN SATZ. "
-        "Behandle die Systemdaten als absolute Tatsache.\n\n"
-        f"Systemdaten:\n"
+        "Nenne Uhrzeit, Datum oder Wetter NUR, wenn der Nutzer explizit danach fragt. "
+        "Erwähne Zeit oder Datum NIEMALS bei allgemeinen Fragen oder Bestätigungen!\n\n"
+        f"Hintergrund-Informationen (NUR bei expliziter Nachfrage nennen):\n"
         f"- Uhrzeit/Datum: {datum_uhrzeit_str}\n"
-        f"- Wetter am Standort: {weather_info}\n"
+        f"- Wetter: {weather_info}\n"
     )
 
     api_key = os.environ.get("GROQ_API_KEY")
