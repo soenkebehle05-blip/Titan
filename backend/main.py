@@ -26,13 +26,13 @@ class ChatRequest(BaseModel):
     coords: Optional[Dict[str, float]] = None
 
 # ---------------------------------------------------------
-# Notion Integration (Extrahiert reine UUID aus URLs)
+# Notion Integration (Schreibt direkt auf die Seite "Titan")
 # ---------------------------------------------------------
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
 def extract_notion_id(raw_id: Optional[str]) -> str:
-    """Isoliert zuverlässig die 32-stellige Notion UUID, selbst wenn eine vollständige URL eingegeben wurde."""
+    """Isoliert die 32-stellige Notion UUID mit Bindestrichen."""
     if not raw_id:
         return ""
     cleaned = raw_id.strip('\'" ')
@@ -55,70 +55,64 @@ def eintrag_erstellen(titel: str):
         return "Sir, Notion ist auf Render nicht konfiguriert."
     
     clean_id = extract_notion_id(NOTION_DATABASE_ID)
-    url_page = "https://api.notion.com/v1/pages"
+    url_block = f"https://api.notion.com/v1/blocks/{clean_id}/children"
     
-    # 1. Versuchen als Datenbank-Eintrag
+    # Fügt eine To-Do-Zeile direkt auf der Notion-Seite ein
     payload = {
-        "parent": {"database_id": clean_id},
-        "properties": {
-            "Titan": {
-                "title": [{"text": {"content": titel}}]
+        "children": [
+            {
+                "object": "block",
+                "type": "to_do",
+                "to_do": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {"content": titel}
+                        }
+                    ],
+                    "checked": False
+                }
             }
-        }
-    }
-    
-    res = requests.post(url_page, json=payload, headers=get_notion_headers(), timeout=10)
-    if res.status_code == 200:
-        return f"Sir, der Eintrag '{titel}' wurde erfolgreich in Notion erstellt."
-        
-    # 2. Falls Unterseite einer normalen Notion-Seite
-    payload_page = {
-        "parent": {"page_id": clean_id},
-        "properties": {
-            "title": [{"text": {"content": titel}}]
-        }
-    }
-    res_page = requests.post(url_page, json=payload_page, headers=get_notion_headers(), timeout=10)
-    
-    if res_page.status_code == 200:
-        return f"Sir, der Eintrag '{titel}' wurde erfolgreich in Notion erstellt."
-    else:
-        err_msg = res_page.json().get('message', res_page.text)
-        return f"Sir, Fehler beim Erstellen in Notion: {err_msg}"
-
-def eintraege_auslesen():
-    if not NOTION_TOKEN:
-        return "Sir, NOTION_TOKEN ist auf Render nicht konfiguriert."
-    
-    url_search = "https://api.notion.com/v1/search"
-    payload = {
-        "page_size": 25,
-        "sort": {
-            "direction": "descending",
-            "timestamp": "last_edited_time"
-        }
+        ]
     }
     
     try:
-        res = requests.post(url_search, json=payload, headers=get_notion_headers(), timeout=10)
+        res = requests.patch(url_block, json=payload, headers=get_notion_headers(), timeout=10)
+        if res.status_code == 200:
+            return f"Sir, '{titel}' wurde auf Ihre Liste geschrieben."
+        else:
+            err_msg = res.json().get('message', res.text)
+            return f"Sir, Fehler beim Eintragen in Notion: {err_msg}"
+    except Exception as e:
+        return f"Sir, Fehler bei der Verbindung zu Notion: {str(e)}"
+
+def eintraege_auslesen():
+    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
+        return "Sir, NOTION_TOKEN ist auf Render nicht konfiguriert."
+    
+    clean_id = extract_notion_id(NOTION_DATABASE_ID)
+    url_block = f"https://api.notion.com/v1/blocks/{clean_id}/children"
+    
+    try:
+        res = requests.get(url_block, headers=get_notion_headers(), timeout=10)
         if res.status_code != 200:
             err_msg = res.json().get('message', res.text)
             return f"Sir, Fehler beim Auslesen aus Notion: {err_msg}"
             
         results = res.json().get("results", [])
         if not results:
-            return "Sir, es wurden keine Einträge in Notion gefunden."
+            return "Sir, es wurden noch keine Notizen auf Ihrer Liste gefunden."
         
         eintraege = []
-        for item in results:
-            props = item.get("properties", {})
-            for prop_name, prop_val in props.items():
-                if isinstance(prop_val, dict) and prop_val.get("type") == "title":
-                    title_list = prop_val.get("title", [])
-                    if title_list:
-                        text = title_list[0].get("plain_text", "").strip()
-                        if text and text.lower() != "titan" and text not in eintraege:
-                            eintraege.append(text)
+        for block in results:
+            b_type = block.get("type")
+            # Liest To-Do-Blöcke und Bullet-Points aus
+            if b_type in ["to_do", "bulleted_list_item", "paragraph"]:
+                texts = block.get(b_type, {}).get("rich_text", [])
+                if texts:
+                    text_content = texts[0].get("plain_text", "").strip()
+                    if text_content:
+                        eintraege.append(text_content)
                             
         if not eintraege:
             return "Sir, es wurden noch keine Notizen auf Ihrer Liste gefunden."
@@ -160,16 +154,17 @@ async def chat(req: ChatRequest):
     aktueller_tag = wochentage[jetzt.weekday()]
     datum_uhrzeit_str = f"{aktueller_tag}, {jetzt.strftime('%d.%m.%Y')}, {jetzt.strftime('%H:%M')} Uhr"
 
-    # 2. Schlüsselwörter für Notion (Notizen & To-Do-Liste)
+    # 2. Schlüsselwörter für Notion
     keywords_notion_read = [
         "welche notizen", "notion auslesen", "notizen anzeigen", "was steht in notion", 
         "meine aufgaben", "to-do-liste", "todo liste", "to do liste", "welche aufgaben", 
-        "was steht auf meiner liste", "was steht auf der liste", "was steht noch"
+        "was steht auf meiner liste", "was steht auf der liste", "was steht noch",
+        "vorlesen", "lies mir", "lies meine", "liste vorlesen"
     ]
     keywords_notion_write = [
         "erstelle notiz", "notier", "in notion eintragen", "notiz hinzufügen", "neuer eintrag",
         "schreibe auf die to-do-liste", "auf die liste setzen", "auf die to-do-liste", 
-        "auf meine liste", "erstelle die notiz", "eintrag erstellen"
+        "auf meine liste", "erstelle die notiz", "eintrag erstellen", "schreib", "setze"
     ]
 
     # Auslesen
@@ -184,6 +179,8 @@ async def chat(req: ChatRequest):
                 titel = user_msg_lower.split(kw)[-1].strip(" :")
                 if "auf die" in titel:
                     titel = titel.split("auf die")[0].strip()
+                if "auf meine" in titel:
+                    titel = titel.split("auf meine")[0].strip()
                 break
         return {"reply": eintrag_erstellen(titel if titel else user_msg)}
 
