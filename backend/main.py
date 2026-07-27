@@ -33,14 +33,25 @@ NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
 notion = Client(auth=NOTION_TOKEN) if NOTION_TOKEN else None
 
+def get_clean_db_id(db_id: str) -> str:
+    """Formatiert die Datenbank-ID mit Bindestrichen für die Notion API, falls nötig."""
+    if not db_id:
+        return ""
+    clean = db_id.replace("-", "").strip()
+    if len(clean) == 32:
+        return f"{clean[:8]}-{clean[8:12]}-{clean[12:16]}-{clean[16:20]}-{clean[20:]}"
+    return db_id
+
 def eintrag_erstellen(titel: str):
     """Erstellt einen neuen Eintrag in deiner Notion-Datenbank unter 'Titan'."""
     if not notion or not NOTION_DATABASE_ID:
         return "Sir, Notion ist auf Render nicht konfiguriert."
     
+    db_id = get_clean_db_id(NOTION_DATABASE_ID)
+    
     try:
         notion.pages.create(
-            parent={"database_id": NOTION_DATABASE_ID},
+            parent={"database_id": db_id},
             properties={
                 "Titan": {
                     "title": [
@@ -54,31 +65,27 @@ def eintrag_erstellen(titel: str):
         return f"Sir, Fehler beim Erstellen des Eintrags: {str(e)}"
 
 def eintraege_auslesen():
-    """Liest die neuesten Einträge aus deiner Notion-Datenbank aus."""
+    """Liest die Einträge aus deiner Notion-Datenbank aus."""
     if not notion or not NOTION_DATABASE_ID:
         return "Sir, Notion ist auf Render nicht konfiguriert."
     
+    db_id = get_clean_db_id(NOTION_DATABASE_ID)
+    
     try:
-        # Verwendung von notion.search für maximale Kompatibilität ohne URL-Probleme
-        response = notion.search(
-            filter={"value": "page", "property": "object"}
-        )
+        response = notion.databases.query(database_id=db_id)
         results = response.get("results", [])
+        
+        if not results:
+            return "Sir, es wurden keine Einträge in Notion gefunden."
         
         eintraege = []
         for page in results:
-            # Prüfen, ob die Seite zu unserer Datenbank gehört
-            parent = page.get("parent", {})
-            db_id = parent.get("database_id", "").replace("-", "")
-            target_id = NOTION_DATABASE_ID.replace("-", "")
-            
-            if db_id == target_id or not NOTION_DATABASE_ID:
-                props = page.get("properties", {})
-                titan_prop = props.get("Titan", {})
-                if titan_prop.get("type") == "title":
-                    title_list = titan_prop.get("title", [])
-                    if title_list:
-                        eintraege.append(title_list[0].get("plain_text", ""))
+            props = page.get("properties", {})
+            titan_prop = props.get("Titan", {})
+            if titan_prop.get("type") == "title":
+                title_list = titan_prop.get("title", [])
+                if title_list:
+                    eintraege.append(title_list[0].get("plain_text", ""))
         
         if not eintraege:
             return "Sir, es wurden keine Einträge in Notion gefunden."
@@ -129,7 +136,7 @@ async def chat(req: ChatRequest):
     keywords_notion_write = [
         "erstelle notiz", "notier", "in notion eintragen", "notiz hinzufügen", "neuer eintrag",
         "schreibe auf die to-do-liste", "auf die liste setzen", "auf die to-do-liste", 
-        "auf meine liste", "erstelle die notiz"
+        "auf meine liste", "erstelle die notiz", "eintrag erstellen"
     ]
 
     # Auslesen
