@@ -59,21 +59,26 @@ def eintraege_auslesen():
         return "Sir, Notion ist auf Render nicht konfiguriert."
     
     try:
-        # notion.request wird genutzt, um Versionskonflikte bei notion-client zu vermeiden
-        response = notion.request(path=f"databases/{NOTION_DATABASE_ID}/query", method="POST")
+        # Verwendung von notion.search für maximale Kompatibilität ohne URL-Probleme
+        response = notion.search(
+            filter={"value": "page", "property": "object"}
+        )
         results = response.get("results", [])
-        
-        if not results:
-            return "Sir, es wurden keine Einträge in Notion gefunden."
         
         eintraege = []
         for page in results:
-            props = page.get("properties", {})
-            titan_prop = props.get("Titan", {})
-            if titan_prop.get("type") == "title":
-                title_list = titan_prop.get("title", [])
-                if title_list:
-                    eintraege.append(title_list[0].get("plain_text", ""))
+            # Prüfen, ob die Seite zu unserer Datenbank gehört
+            parent = page.get("parent", {})
+            db_id = parent.get("database_id", "").replace("-", "")
+            target_id = NOTION_DATABASE_ID.replace("-", "")
+            
+            if db_id == target_id or not NOTION_DATABASE_ID:
+                props = page.get("properties", {})
+                titan_prop = props.get("Titan", {})
+                if titan_prop.get("type") == "title":
+                    title_list = titan_prop.get("title", [])
+                    if title_list:
+                        eintraege.append(title_list[0].get("plain_text", ""))
         
         if not eintraege:
             return "Sir, es wurden keine Einträge in Notion gefunden."
