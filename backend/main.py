@@ -1,4 +1,3 @@
-
 import os
 import requests
 from datetime import datetime
@@ -32,12 +31,12 @@ NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
 def get_clean_db_id(db_id: str) -> str:
+    """Bereinigt die Notion Database ID von Leerzeichen und Bindestrichen."""
     if not db_id:
         return ""
+    # Entfernt Leerzeichen und Bindestriche für die URL
     clean = db_id.replace("-", "").strip()
-    if len(clean) == 32:
-        return f"{clean[:8]}-{clean[8:12]}-{clean[12:16]}-{clean[16:20]}-{clean[20:]}"
-    return db_id
+    return clean
 
 def eintrag_erstellen(titel: str):
     if not NOTION_TOKEN or not NOTION_DATABASE_ID:
@@ -46,7 +45,7 @@ def eintrag_erstellen(titel: str):
     db_id = get_clean_db_id(NOTION_DATABASE_ID)
     url = "https://api.notion.com/v1/pages"
     headers = {
-        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Authorization": f"Bearer {NOTION_TOKEN.strip()}",
         "Content-Type": "application/json",
         "Notion-Version": "2022-06-28"
     }
@@ -66,7 +65,8 @@ def eintrag_erstellen(titel: str):
         if res.status_code == 200:
             return f"Sir, der Eintrag '{titel}' wurde erfolgreich in Notion erstellt."
         else:
-            return f"Sir, Fehler beim Erstellen in Notion: {res.json().get('message', res.text)}"
+            err_msg = res.json().get('message', res.text)
+            return f"Sir, Fehler beim Erstellen in Notion: {err_msg}"
     except Exception as e:
         return f"Sir, Fehler beim Erstellen des Eintrags: {str(e)}"
 
@@ -77,7 +77,7 @@ def eintraege_auslesen():
     db_id = get_clean_db_id(NOTION_DATABASE_ID)
     url = f"https://api.notion.com/v1/databases/{db_id}/query"
     headers = {
-        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Authorization": f"Bearer {NOTION_TOKEN.strip()}",
         "Content-Type": "application/json",
         "Notion-Version": "2022-06-28"
     }
@@ -85,7 +85,8 @@ def eintraege_auslesen():
     try:
         res = requests.post(url, headers=headers, timeout=10)
         if res.status_code != 200:
-            return f"Sir, Fehler beim Auslesen aus Notion: {res.json().get('message', res.text)}"
+            err_msg = res.json().get('message', res.text)
+            return f"Sir, Fehler beim Auslesen aus Notion: {err_msg}"
             
         data = res.json()
         results = data.get("results", [])
