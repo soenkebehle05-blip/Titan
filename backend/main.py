@@ -25,88 +25,95 @@ class ChatRequest(BaseModel):
     coords: Optional[Dict[str, float]] = None
 
 # ---------------------------------------------------------
-# Notion Integration (Direkt über HTTP/Requests)
+# Notion Integration (Sicherer Search-API-Ansatz)
 # ---------------------------------------------------------
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
-def get_clean_db_id(db_id: str) -> str:
-    """Bereinigt die Notion Database ID von Leerzeichen und Bindestrichen."""
-    if not db_id:
-        return ""
-    # Entfernt Leerzeichen und Bindestriche für die URL
-    clean = db_id.replace("-", "").strip()
-    return clean
+def get_notion_headers():
+    return {
+        "Authorization": f"Bearer {NOTION_TOKEN.strip() if NOTION_TOKEN else ''}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
 
 def eintrag_erstellen(titel: str):
     if not NOTION_TOKEN or not NOTION_DATABASE_ID:
         return "Sir, Notion ist auf Render nicht konfiguriert."
     
-    db_id = get_clean_db_id(NOTION_DATABASE_ID)
-    url = "https://api.notion.com/v1/pages"
-    headers = {
-        "Authorization": f"Bearer {NOTION_TOKEN.strip()}",
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
-    }
+    clean_db_id = NOTION_DATABASE_ID.replace("-", "").strip()
+    
+    # 1. Erst versuchen als Datenbank-Eintrag
+    url_page = "https://api.notion.com/v1/pages"
     payload = {
-        "parent": {"database_id": db_id},
+        "parent": {"database_id": clean_db_id},
         "properties": {
             "Titan": {
-                "title": [
-                    {"text": {"content": titel}}
-                ]
+                "title": [{"text": {"content": titel}}]
             }
         }
     }
     
-    try:
-        res = requests.post(url, json=payload, headers=headers, timeout=10)
-        if res.status_code == 200:
-            return f"Sir, der Eintrag '{titel}' wurde erfolgreich in Notion erstellt."
-        else:
-            err_msg = res.json().get('message', res.text)
-            return f"Sir, Fehler beim Erstellen in Notion: {err_msg}"
-    except Exception as e:
-        return f"Sir, Fehler beim Erstellen des Eintrags: {str(e)}"
+    res = requests.post(url_page, json=payload, headers=get_notion_headers(), timeout=10)
+    
+    if res.status_code == 200:
+        return f"Sir, der Eintrag '{titel}' wurde erfolgreich in Notion erstellt."
+        
+    # 2. Falls die ID eine normale Seite ist, Eintrag als Unterseite anlegen
+    payload_page = {
+        "parent": {"page_id": clean_db_id},
+        "properties": {
+            "title": [{"text": {"content": titel}}]
+        }
+    }
+    res_page = requests.post(url_page, json=payload_page, headers=get_notion_headers(), timeout=10)
+    
+    if res_page.status_code == 200:
+        return f"Sir, der Eintrag '{titel}' wurde erfolgreich in Notion erstellt."
+    else:
+        err_msg = res_page.json().get('message', res_page.text)
+        return f"Sir, Fehler beim Erstellen in Notion: {err_msg}"
 
 def eintraege_auslesen():
-    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
-        return "Sir, Notion ist auf Render nicht konfiguriert."
+    if not NOTION_TOKEN:
+        return "Sir, NOTION_TOKEN ist auf Render nicht konfiguriert."
     
-    db_id = get_clean_db_id(NOTION_DATABASE_ID)
-    url = f"https://api.notion.com/v1/databases/{db_id}/query"
-    headers = {
-        "Authorization": f"Bearer {NOTION_TOKEN.strip()}",
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
+    url_search = "https://api.notion.com/v1/search"
+    payload = {
+        "page_size": 20,
+        "sort": {
+            "direction": "descending",
+            "timestamp": "last_edited_time"
+        }
     }
     
     try:
-        res = requests.post(url, headers=headers, timeout=10)
+        res = requests.post(url_search, json=payload, headers=get_notion_headers(), timeout=10)
         if res.status_code != 200:
             err_msg = res.json().get('message', res.text)
             return f"Sir, Fehler beim Auslesen aus Notion: {err_msg}"
             
-        data = res.json()
-        results = data.get("results", [])
-        
+        results = res.json().get("results", [])
         if not results:
             return "Sir, es wurden keine Einträge in Notion gefunden."
         
         eintraege = []
-        for page in results:
-            props = page.get("properties", {})
-            titan_prop = props.get("Titan", {})
-            if titan_prop.get("type") == "title":
-                title_list = titan_prop.get("title", [])
-                if title_list:
-                    eintraege.append(title_list[0].get("plain_text", ""))
-        
+        for item in results:
+            props = item.get("properties", {})
+            
+            # Suche in allen Eigenschaften nach Titeln
+            for prop_name, prop_val in props.items():
+                if isinstance(prop_val, dict) and prop_val.get("type") == "title":
+                    title_list = prop_val.get("title", [])
+                    if title_list:
+                        text = title_list[0].get("plain_text", "").strip()
+                        if text:
+                            eintraege.append(text)
+                            
         if not eintraege:
             return "Sir, es wurden keine Einträge in Notion gefunden."
 
-        liste_text = ", ".join(eintraege)
+        liste_text = ", ".join(eintraege[:10])
         return f"Sir, folgende Einträge befinden sich in Notion: {liste_text}."
     except Exception as e:
         return f"Sir, Fehler beim Auslesen von Notion: {str(e)}"
