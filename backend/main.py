@@ -59,7 +59,8 @@ def eintraege_auslesen():
         return "Sir, Notion ist auf Render nicht konfiguriert."
     
     try:
-        response = notion.databases.query(database_id=NOTION_DATABASE_ID)
+        # notion.request wird genutzt, um Versionskonflikte bei notion-client zu vermeiden
+        response = notion.request(path=f"databases/{NOTION_DATABASE_ID}/query", method="POST")
         results = response.get("results", [])
         
         if not results:
@@ -114,7 +115,7 @@ async def chat(req: ChatRequest):
     aktueller_tag = wochentage[jetzt.weekday()]
     datum_uhrzeit_str = f"{aktueller_tag}, {jetzt.strftime('%d.%m.%Y')}, {jetzt.strftime('%H:%M')} Uhr"
 
-    # 2. Erweiterte Schlüsselwörter für Notion (Notizen & To-Do-Liste)
+    # 2. Schlüsselwörter für Notion (Notizen & To-Do-Liste)
     keywords_notion_read = [
         "welche notizen", "notion auslesen", "notizen anzeigen", "was steht in notion", 
         "meine aufgaben", "to-do-liste", "todo liste", "to do liste", "welche aufgaben", 
@@ -136,7 +137,6 @@ async def chat(req: ChatRequest):
         for kw in keywords_notion_write:
             if kw in user_msg_lower:
                 titel = user_msg_lower.split(kw)[-1].strip(" :")
-                # Falls z. B. gesagt wurde "schreibe Essen machen auf die To-Do-Liste"
                 if "auf die" in titel:
                     titel = titel.split("auf die")[0].strip()
                 break
