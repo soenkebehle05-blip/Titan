@@ -1,3 +1,4 @@
+
 import os
 import requests
 from datetime import datetime
@@ -7,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict
 from groq import Groq
-from notion_client import Client
 
 app = FastAPI()
 
@@ -26,15 +26,12 @@ class ChatRequest(BaseModel):
     coords: Optional[Dict[str, float]] = None
 
 # ---------------------------------------------------------
-# Notion Integration
+# Notion Integration (Direkt über HTTP/Requests)
 # ---------------------------------------------------------
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
-notion = Client(auth=NOTION_TOKEN) if NOTION_TOKEN else None
-
 def get_clean_db_id(db_id: str) -> str:
-    """Formatiert die Datenbank-ID mit Bindestrichen für die Notion API, falls nötig."""
     if not db_id:
         return ""
     clean = db_id.replace("-", "").strip()
@@ -43,37 +40,55 @@ def get_clean_db_id(db_id: str) -> str:
     return db_id
 
 def eintrag_erstellen(titel: str):
-    """Erstellt einen neuen Eintrag in deiner Notion-Datenbank unter 'Titan'."""
-    if not notion or not NOTION_DATABASE_ID:
+    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
         return "Sir, Notion ist auf Render nicht konfiguriert."
     
     db_id = get_clean_db_id(NOTION_DATABASE_ID)
+    url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+    payload = {
+        "parent": {"database_id": db_id},
+        "properties": {
+            "Titan": {
+                "title": [
+                    {"text": {"content": titel}}
+                ]
+            }
+        }
+    }
     
     try:
-        notion.pages.create(
-            parent={"database_id": db_id},
-            properties={
-                "Titan": {
-                    "title": [
-                        {"text": {"content": titel}}
-                    ]
-                }
-            }
-        )
-        return f"Sir, der Eintrag '{titel}' wurde erfolgreich in Notion erstellt."
+        res = requests.post(url, json=payload, headers=headers, timeout=10)
+        if res.status_code == 200:
+            return f"Sir, der Eintrag '{titel}' wurde erfolgreich in Notion erstellt."
+        else:
+            return f"Sir, Fehler beim Erstellen in Notion: {res.json().get('message', res.text)}"
     except Exception as e:
         return f"Sir, Fehler beim Erstellen des Eintrags: {str(e)}"
 
 def eintraege_auslesen():
-    """Liest die Einträge aus deiner Notion-Datenbank aus."""
-    if not notion or not NOTION_DATABASE_ID:
+    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
         return "Sir, Notion ist auf Render nicht konfiguriert."
     
     db_id = get_clean_db_id(NOTION_DATABASE_ID)
+    url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
     
     try:
-        response = notion.databases.query(database_id=db_id)
-        results = response.get("results", [])
+        res = requests.post(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return f"Sir, Fehler beim Auslesen aus Notion: {res.json().get('message', res.text)}"
+            
+        data = res.json()
+        results = data.get("results", [])
         
         if not results:
             return "Sir, es wurden keine Einträge in Notion gefunden."
