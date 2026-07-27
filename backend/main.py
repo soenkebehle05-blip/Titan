@@ -25,7 +25,7 @@ class ChatRequest(BaseModel):
     coords: Optional[Dict[str, float]] = None
 
 # ---------------------------------------------------------
-# Notion Integration (Sicherer Search-API-Ansatz)
+# Notion Integration (Präzises Auslesen & Filtern)
 # ---------------------------------------------------------
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
@@ -42,9 +42,9 @@ def eintrag_erstellen(titel: str):
         return "Sir, Notion ist auf Render nicht konfiguriert."
     
     clean_db_id = NOTION_DATABASE_ID.replace("-", "").strip()
-    
-    # 1. Erst versuchen als Datenbank-Eintrag
     url_page = "https://api.notion.com/v1/pages"
+    
+    # 1. Versuchen als Datenbank-Eintrag
     payload = {
         "parent": {"database_id": clean_db_id},
         "properties": {
@@ -59,7 +59,7 @@ def eintrag_erstellen(titel: str):
     if res.status_code == 200:
         return f"Sir, der Eintrag '{titel}' wurde erfolgreich in Notion erstellt."
         
-    # 2. Falls die ID eine normale Seite ist, Eintrag als Unterseite anlegen
+    # 2. Falls Unterseite einer normalen Notion-Seite
     payload_page = {
         "parent": {"page_id": clean_db_id},
         "properties": {
@@ -80,7 +80,7 @@ def eintraege_auslesen():
     
     url_search = "https://api.notion.com/v1/search"
     payload = {
-        "page_size": 20,
+        "page_size": 25,
         "sort": {
             "direction": "descending",
             "timestamp": "last_edited_time"
@@ -101,20 +101,21 @@ def eintraege_auslesen():
         for item in results:
             props = item.get("properties", {})
             
-            # Suche in allen Eigenschaften nach Titeln
+            # Suche in Eigenschaften nach Titeln
             for prop_name, prop_val in props.items():
                 if isinstance(prop_val, dict) and prop_val.get("type") == "title":
                     title_list = prop_val.get("title", [])
                     if title_list:
                         text = title_list[0].get("plain_text", "").strip()
-                        if text:
+                        # 'Titan' (Seitennamen) herausfiltern, nur echte Notizen zulassen
+                        if text and text.lower() != "titan" and text not in eintraege:
                             eintraege.append(text)
                             
         if not eintraege:
-            return "Sir, es wurden keine Einträge in Notion gefunden."
+            return "Sir, es wurden noch keine Notizen auf Ihrer Liste gefunden."
 
-        liste_text = ", ".join(eintraege[:10])
-        return f"Sir, folgende Einträge befinden sich in Notion: {liste_text}."
+        liste_text = ", ".join(eintraege)
+        return f"Sir, folgende Einträge befinden sich auf Ihrer Liste: {liste_text}."
     except Exception as e:
         return f"Sir, Fehler beim Auslesen von Notion: {str(e)}"
 
@@ -124,7 +125,7 @@ def eintraege_auslesen():
 # ---------------------------------------------------------
 def get_weather(lat: float, lon: float):
     try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&latitude={lat}&longitude={lon}&current_weather=true"
         res = requests.get(url, timeout=5).json()
         temp = res["current_weather"]["temperature"]
         wind = res["current_weather"]["windspeed"]
@@ -154,7 +155,7 @@ async def chat(req: ChatRequest):
     keywords_notion_read = [
         "welche notizen", "notion auslesen", "notizen anzeigen", "was steht in notion", 
         "meine aufgaben", "to-do-liste", "todo liste", "to do liste", "welche aufgaben", 
-        "was steht auf meiner liste", "was steht auf der liste"
+        "was steht auf meiner liste", "was steht auf der liste", "was steht noch"
     ]
     keywords_notion_write = [
         "erstelle notiz", "notier", "in notion eintragen", "notiz hinzufügen", "neuer eintrag",
@@ -162,11 +163,11 @@ async def chat(req: ChatRequest):
         "auf meine liste", "erstelle die notiz", "eintrag erstellen"
     ]
 
-    # Auslesen
+    # Direktes Auslesen (LLM wird für diesen Pfad nicht belästigt)
     if any(kw in user_msg_lower for kw in keywords_notion_read):
         return {"reply": eintraege_auslesen()}
 
-    # Eintragen
+    # Direktes Eintragen
     if any(kw in user_msg_lower for kw in keywords_notion_write):
         titel = user_msg
         for kw in keywords_notion_write:
@@ -188,21 +189,15 @@ async def chat(req: ChatRequest):
         else:
             weather_info = "GPS-Standort deaktiviert."
 
-    # 4. System-Prompt für Titan
+    # 4. KI-System-Prompt für sonstige Fragen
     system_instruction = (
-        "Du bist TITAN, ein hochintelligenter, höflicher Sprachassistent. "
+        "Du bist TITAN, ein hochintelligenter Sprachassistent. "
         "Platziere die Anrede 'Sir' AUSNAHMSLOS AN DEN ANFANG deiner Antwort (z. B. 'Sir, es ist...'). "
-        "Antworte EXTREM KURZ, HOEFLICH UND DIREKT IN EINEM EINZIGEN SATZ. "
-        "Sag niemals 'Ich habe keine genauen Informationen' oder 'Empfehle Wetterberichte'. "
+        "Antworte EXTREM KURZ UND DIREKT IN EINEM EINZIGEN SATZ. "
         "Behandle die Systemdaten als absolute Tatsache.\n\n"
         f"Systemdaten:\n"
         f"- Uhrzeit/Datum: {datum_uhrzeit_str}\n"
-        f"- Wetter am Standort: {weather_info}\n\n"
-        "BEISPIELE FÜR DIE ANTWORT:\n"
-        "Frage: Wie ist das Wetter?\n"
-        "Antwort: Sir, aktuell sind es 15,4 °C bei einer Windgeschwindigkeit von 8,8 km/h.\n\n"
-        "Frage: Wie spät ist es?\n"
-        "Antwort: Sir, es ist Montag, 10:11 Uhr.\n"
+        f"- Wetter am Standort: {weather_info}\n"
     )
 
     api_key = os.environ.get("GROQ_API_KEY")
