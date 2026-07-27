@@ -1,13 +1,17 @@
 import os
 import re
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import zoneinfo
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, Dict
 from groq import Groq
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
 
 app = FastAPI()
 
@@ -26,13 +30,140 @@ class ChatRequest(BaseModel):
     coords: Optional[Dict[str, float]] = None
 
 # ---------------------------------------------------------
+# Google OAuth Configuration
+# ---------------------------------------------------------
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+# Speichert das Zugriffs-Token temporär im Speicher
+USER_CREDENTIALS = None
+
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+def get_google_flow(request: Request):
+    # Dynamische Callback-URL basierend auf deinem Render-Host
+    redirect_uri = str(request.url_for('auth_callback'))
+    if redirect_uri.startswith("http://"):
+        redirect_uri = redirect_uri.replace("http://", "https://")
+        
+    client_config = {
+        "web": {
+            "client_id": GOOGLE_CLIENT_ID,
+            "project_id": "titan-assistant",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_secret": GOOGLE_CLIENT_SECRET
+        }
+    }
+    return Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        redirect_uri=redirect_uri
+    )
+
+@app.get("/auth/google")
+async def auth_google(request: Request):
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return {"error": "Google Credentials sind auf Render nicht gesetzt."}
+    flow = get_google_flow(request)
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent'
+    )
+    return RedirectResponse(authorization_url)
+
+@app.get("/auth/callback", name="auth_callback")
+async def auth_callback(request: Request, code: str):
+    global USER_CREDENTIALS
+    flow = get_google_flow(request)
+    flow.fetch_token(code=code)
+    credentials = flow.credentials
+    USER_CREDENTIALS = {
+        'token': credentials.token,
+        'refresh_token': credentials.refresh_token,
+        'token_uri': credentials.token_uri,
+        'client_id': credentials.client_id,
+        'client_secret': credentials.client_secret,
+        'scopes': credentials.scopes
+    }
+    # Nach Erfolg Weiterleitung zurück zur Frontend-App
+    return RedirectResponse(url="/")
+
+
+# ---------------------------------------------------------
+# Google Kalender Hilfsfunktionen
+# ---------------------------------------------------------
+def get_calendar_service():
+    if not USER_CREDENTIALS:
+        return None
+    creds = Credentials(**USER_CREDENTIALS)
+    return build('calendar', 'v3', credentials=creds)
+
+def kalender_termine_abrufen():
+    service = get_calendar_service()
+    if not service:
+        return "Sir, Sie sind noch nicht mit Google Kalender verbunden. Bitte melden Sie sich zuerst über Google an."
+    
+    tz = zoneinfo.ZoneInfo("Europe/Berlin")
+    now = datetime.now(tz)
+    start_of_day = now.replace(hour=0, minute=0, second=0).isoformat()
+    end_of_day = (now + timedelta(days=1)).replace(hour=23, minute=59, second=59).isoformat()
+
+    try:
+        events_result = service.events().list(
+            calendarId='primary', timeMin=start_of_day, timeMax=end_of_day,
+            singleEvents=True, orderBy='startTime'
+        ).execute()
+        events = events_result.get('items', [])
+
+        if not events:
+            return "Sir, Sie haben für heute keine anstehenden Termine im Kalender."
+
+        termine = []
+        for event in events:
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            summary = event.get('summary', 'Unbenannter Termin')
+            if 'T' in start:
+                zeit_str = datetime.fromisoformat(start).strftime('%H:%M Uhr')
+                termine.append(f"'{summary}' um {zeit_str}")
+            else:
+                termine.append(f"'{summary}' (Ganztägig)")
+
+        return f"Sir, Ihre heutigen Termine lauten: {', '.join(termine)}."
+    except Exception as e:
+        return f"Sir, Fehler beim Abrufen des Kalenders: {str(e)}"
+
+def kalender_termin_eintragen(summary: str, stunden_offset: int = 24):
+    service = get_calendar_service()
+    if not service:
+        return "Sir, bitte verbinden Sie zuerst Ihren Google Kalender."
+
+    tz = zoneinfo.ZoneInfo("Europe/Berlin")
+    start_time = datetime.now(tz) + timedelta(hours=stunden_offset)
+    end_time = start_time + timedelta(hours=1)
+
+    event = {
+        'summary': summary,
+        'start': {'dateTime': start_time.isoformat()},
+        'end': {'dateTime': end_time.isoformat()},
+    }
+
+    try:
+        service.events().insert(calendarId='primary', body=event).execute()
+        datum_str = start_time.strftime('%d.%m. um %H:%M Uhr')
+        return f"Sir, der Termin '{summary}' wurde für den {datum_str} in Ihren Google Kalender eingetragen."
+    except Exception as e:
+        return f"Sir, Fehler beim Speichern des Termins: {str(e)}"
+
+
+# ---------------------------------------------------------
 # Notion Integration
 # ---------------------------------------------------------
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
 def extract_notion_id(raw_id: Optional[str]) -> str:
-    """Isoliert die 32-stellige Notion UUID mit Bindestrichen."""
     if not raw_id:
         return ""
     cleaned = raw_id.strip('\'" ')
@@ -56,52 +187,29 @@ def eintrag_erstellen(titel: str):
     
     clean_id = extract_notion_id(NOTION_DATABASE_ID)
     url_block = f"https://api.notion.com/v1/blocks/{clean_id}/children"
-    
     payload = {
-        "children": [
-            {
-                "object": "block",
-                "type": "to_do",
-                "to_do": {
-                    "rich_text": [
-                        {
-                            "type": "text",
-                            "text": {"content": titel}
-                        }
-                    ],
-                    "checked": False
-                }
-            }
-        ]
+        "children": [{
+            "object": "block",
+            "type": "to_do",
+            "to_do": {"rich_text": [{"type": "text", "text": {"content": titel}}], "checked": False}
+        }]
     }
-    
     try:
         res = requests.patch(url_block, json=payload, headers=get_notion_headers(), timeout=10)
         if res.status_code == 200:
             return f"Sir, '{titel}' wurde auf Ihre Liste geschrieben."
-        else:
-            err_msg = res.json().get('message', res.text)
-            return f"Sir, Fehler beim Eintragen in Notion: {err_msg}"
+        return f"Sir, Fehler beim Eintragen in Notion: {res.text}"
     except Exception as e:
-        return f"Sir, Fehler bei der Verbindung zu Notion: {str(e)}"
+        return f"Sir, Fehler bei Notion: {str(e)}"
 
 def eintraege_auslesen():
     if not NOTION_TOKEN or not NOTION_DATABASE_ID:
-        return "Sir, NOTION_TOKEN ist auf Render nicht konfiguriert."
-    
+        return "Sir, Notion ist nicht konfiguriert."
     clean_id = extract_notion_id(NOTION_DATABASE_ID)
     url_block = f"https://api.notion.com/v1/blocks/{clean_id}/children"
-    
     try:
         res = requests.get(url_block, headers=get_notion_headers(), timeout=10)
-        if res.status_code != 200:
-            err_msg = res.json().get('message', res.text)
-            return f"Sir, Fehler beim Auslesen aus Notion: {err_msg}"
-            
         results = res.json().get("results", [])
-        if not results:
-            return "Sir, es wurden noch keine Notizen auf Ihrer Liste gefunden."
-        
         eintraege = []
         for block in results:
             b_type = block.get("type")
@@ -111,12 +219,9 @@ def eintraege_auslesen():
                     text_content = texts[0].get("plain_text", "").strip()
                     if text_content:
                         eintraege.append(text_content)
-                            
         if not eintraege:
             return "Sir, es wurden noch keine Notizen auf Ihrer Liste gefunden."
-
-        liste_text = ", ".join(eintraege)
-        return f"Sir, folgende Einträge befinden sich auf Ihrer Liste: {liste_text}."
+        return f"Sir, folgende Einträge befinden sich auf Ihrer Liste: {', '.join(eintraege)}."
     except Exception as e:
         return f"Sir, Fehler beim Auslesen von Notion: {str(e)}"
 
@@ -149,79 +254,15 @@ async def chat(req: ChatRequest):
     wochentage = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
     tz = zoneinfo.ZoneInfo("Europe/Berlin")
     jetzt = datetime.now(tz)
-    aktueller_tag = wochentage[jetzt.weekday()]
-    datum_uhrzeit_str = f"{aktueller_tag}, {jetzt.strftime('%d.%m.%Y')}, {jetzt.strftime('%H:%M')} Uhr"
+    datum_uhrzeit_str = f"{wochentage[jetzt.weekday()]}, {jetzt.strftime('%d.%m.%Y')}, {jetzt.strftime('%H:%M')} Uhr"
 
-    # 2. Schlüsselwörter für Notion
-    keywords_notion_read = [
-        "welche notizen", "notion auslesen", "notizen anzeigen", "was steht in notion", 
-        "meine aufgaben", "to-do-liste", "todo liste", "to do liste", "welche aufgaben", 
-        "was steht auf meiner liste", "was steht auf der liste", "was steht noch",
-        "vorlesen", "lies mir", "lies meine", "liste vorlesen"
-    ]
-    keywords_notion_write = [
-        "erstelle notiz", "notier", "in notion eintragen", "notiz hinzufügen", "neuer eintrag",
-        "schreibe auf die to-do-liste", "auf die liste setzen", "auf die to-do-liste", 
-        "auf meine liste", "erstelle die notiz", "eintrag erstellen", "schreib", "setze"
-    ]
+    # 2. Kalender Schlüsselwörter
+    if any(kw in user_msg_lower for kw in ["welche termine", "kalender auslesen", "welche kalender", "termine heute", "was steht im kalender"]):
+        return {"reply": kalender_termine_abrufen()}
+    
+    if any(kw in user_msg_lower for kw in ["termin eintragen", "trage termin", "neuer termin", "termin erstellen"]):
+        titel = user_msg_lower.replace("termin eintragen", "").replace("trage termin", "").strip()
+        return {"reply": kalender_termin_eintragen(titel if titel else "Wichtiger Termin")}
 
-    # Auslesen
-    if any(kw in user_msg_lower for kw in keywords_notion_read):
-        return {"reply": eintraege_auslesen()}
-
-    # Eintragen
-    if any(kw in user_msg_lower for kw in keywords_notion_write):
-        titel = user_msg
-        for kw in keywords_notion_write:
-            if kw in user_msg_lower:
-                titel = user_msg_lower.split(kw)[-1].strip(" :")
-                if "auf die" in titel:
-                    titel = titel.split("auf die")[0].strip()
-                if "auf meine" in titel:
-                    titel = titel.split("auf meine")[0].strip()
-                break
-        return {"reply": eintrag_erstellen(titel if titel else user_msg)}
-
-    # 3. Live-Wetterdaten abrufen
-    weather_info = "Keine GPS-Daten vorhanden."
-    keywords_wetter = ["wetter", "regen", "temperatur", "grad", "sonne", "kalt", "warm", "prognose", "vorhersage", "morgen"]
-    if any(kw in user_msg_lower for kw in keywords_wetter):
-        if req.locationAllowed and req.coords:
-            lat = req.coords.get("lat")
-            lon = req.coords.get("lon")
-            weather_info = get_weather(lat, lon)
-        else:
-            weather_info = "GPS-Standort deaktiviert."
-
-    # 4. System-Prompt für Titan (Optimiert gegen ungefragte Zeitangaben)
-    system_instruction = (
-        "Du bist TITAN, ein hochintelligenter Sprachassistent. "
-        "Platziere die Anrede 'Sir' AUSNAHMSLOS AN DEN ANFANG deiner Antwort (z. B. 'Sir, ...'). "
-        "Antworte EXTREM KURZ UND DIREKT IN EINEM EINZIGEN SATZ. "
-        "Nenne Uhrzeit, Datum oder Wetter NUR, wenn der Nutzer explizit danach fragt. "
-        "Erwähne Zeit oder Datum NIEMALS bei allgemeinen Fragen oder Bestätigungen!\n\n"
-        f"Hintergrund-Informationen (NUR bei expliziter Nachfrage nennen):\n"
-        f"- Uhrzeit/Datum: {datum_uhrzeit_str}\n"
-        f"- Wetter: {weather_info}\n"
-    )
-
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        return {"reply": "Sir, GROQ_API_KEY fehlt auf Render."}
-
-    try:
-        client = Groq(api_key=api_key)
-        
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": user_msg}
-            ],
-            model="llama-3.3-70b-versatile",
-            max_tokens=70
-        )
-        reply = chat_completion.choices[0].message.content
-    except Exception as e:
-        reply = f"Sir, es gab einen Fehler: {str(e)}"
-
-    return {"reply": reply}
+    # 3. Notion Schlüsselwörter
+    if any(kw in user_msg_lower for kw in
