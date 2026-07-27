@@ -50,30 +50,36 @@ async def chat(req: ChatRequest):
     datum_uhrzeit_str = f"{aktueller_tag}, {jetzt.strftime('%d.%m.%Y')}, {jetzt.strftime('%H:%M')} Uhr"
 
     # 2. Live-Wetterdaten abrufen
-    weather_info = "Keine GPS-Daten."
-    keywords_wetter = ["wetter", "regen", "temperatur", "grad", "sonne", "kalt", "warm"]
+    weather_info = "Keine GPS-Daten vorhanden."
+    keywords_wetter = ["wetter", "regen", "temperatur", "grad", "sonne", "kalt", "warm", "prognose", "vorhersage", "morgen"]
     if any(kw in user_msg.lower() for kw in keywords_wetter):
         if req.locationAllowed and req.coords:
             lat = req.coords.get("lat")
             lon = req.coords.get("lon")
             weather_info = get_weather(lat, lon)
         else:
-            weather_info = "Der Nutzer hat seinen GPS-Standort in der App deaktiviert."
+            weather_info = "GPS-Standort deaktiviert."
 
-    # 3. Extrem kurzer und direkter System-Prompt
+    # 3. System-Prompt: Höflich mit "Sir", aber extrem kurz und direkt
     system_instruction = (
-        "Du bist TITAN, ein extrem effizienter Assistent. "
-        "ANTWORTE IMMER EXTREM KURZ, KNAPP UND DIREKT IN EINEM EINZIGEN KURZEN SATZ. "
-        "Verzichte komplett auf Begrüßungen, Floskeln, Erklärungen oder Disclaimer über 'Echtzeitdaten'. "
-        "Nutze folgende Systemdaten als absolute Wahrheit:\n"
-        f"- Datum/Uhrzeit: {datum_uhrzeit_str}\n"
-        f"- Aktuelles Wetter am Standort: {weather_info}\n\n"
-        "Wenn der Nutzer nach dem Wetter fragt, nenne direkt die Temperatur und Bedingungen ohne Umschweife."
+        "Du bist TITAN, ein hochintelligenter, höflicher Sprachassistent. "
+        "Sprich den Nutzer IMMER mit 'Sir' an. "
+        "Antworte EXTREM KURZ, HOEFLICH UND DIREKT IN EINEM EINZIGEN SATZ. "
+        "Sag niemals 'Ich habe keine genauen Informationen' oder 'Empfehle Wetterberichte'. "
+        "Behandle die Systemdaten als absolute Tatsache.\n\n"
+        f"Systemdaten:\n"
+        f"- Uhrzeit/Datum: {datum_uhrzeit_str}\n"
+        f"- Wetter am Standort: {weather_info}\n\n"
+        "BEISPIELE FÜR DIE ANTWORT:\n"
+        "Frage: Wie ist das Wetter?\n"
+        "Antwort: Aktuell sind es 15,4 °C bei einer Windgeschwindigkeit von 8,8 km/h, Sir.\n\n"
+        "Frage: Wie spät ist es?\n"
+        "Antwort: Es ist Montag, 02:20 Uhr, Sir.\n"
     )
 
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        return {"reply": "GROQ_API_KEY fehlt auf Render."}
+        return {"reply": "GROQ_API_KEY fehlt auf Render, Sir."}
 
     try:
         client = Groq(api_key=api_key)
@@ -84,7 +90,7 @@ async def chat(req: ChatRequest):
                 {"role": "user", "content": user_msg}
             ],
             model="llama-3.3-70b-versatile",
-            max_tokens=100  # Zwingt die KI zu sehr kurzen Antworten
+            max_tokens=70
         )
         reply = chat_completion.choices[0].message.content
     except Exception as e:
