@@ -42,7 +42,7 @@ def eintrag_erstellen(titel: str):
         notion.pages.create(
             parent={"database_id": NOTION_DATABASE_ID},
             properties={
-                "Titan": {  # Hier wird 'Titan' als Feldname genutzt
+                "Titan": {
                     "title": [
                         {"text": {"content": titel}}
                     ]
@@ -68,7 +68,6 @@ def eintraege_auslesen():
         eintraege = []
         for page in results:
             props = page.get("properties", {})
-            # Gezielt im Feld 'Titan' nachsehen
             titan_prop = props.get("Titan", {})
             if titan_prop.get("type") == "title":
                 title_list = titan_prop.get("title", [])
@@ -115,18 +114,31 @@ async def chat(req: ChatRequest):
     aktueller_tag = wochentage[jetzt.weekday()]
     datum_uhrzeit_str = f"{aktueller_tag}, {jetzt.strftime('%d.%m.%Y')}, {jetzt.strftime('%H:%M')} Uhr"
 
-    # 2. Notion-Prüfung (Direktbehandlung)
-    keywords_notion_read = ["welche notizen", "notion auslesen", "notizen anzeigen", "was steht in notion", "meine aufgaben"]
-    keywords_notion_write = ["erstelle notiz", "notier", "in notion eintragen", "notiz hinzufügen", "neuer eintrag"]
+    # 2. Erweiterte Schlüsselwörter für Notion (Notizen & To-Do-Liste)
+    keywords_notion_read = [
+        "welche notizen", "notion auslesen", "notizen anzeigen", "was steht in notion", 
+        "meine aufgaben", "to-do-liste", "todo liste", "to do liste", "welche aufgaben", 
+        "was steht auf meiner liste", "was steht auf der liste"
+    ]
+    keywords_notion_write = [
+        "erstelle notiz", "notier", "in notion eintragen", "notiz hinzufügen", "neuer eintrag",
+        "schreibe auf die to-do-liste", "auf die liste setzen", "auf die to-do-liste", 
+        "auf meine liste", "erstelle die notiz"
+    ]
 
+    # Auslesen
     if any(kw in user_msg_lower for kw in keywords_notion_read):
         return {"reply": eintraege_auslesen()}
 
+    # Eintragen
     if any(kw in user_msg_lower for kw in keywords_notion_write):
         titel = user_msg
         for kw in keywords_notion_write:
             if kw in user_msg_lower:
                 titel = user_msg_lower.split(kw)[-1].strip(" :")
+                # Falls z. B. gesagt wurde "schreibe Essen machen auf die To-Do-Liste"
+                if "auf die" in titel:
+                    titel = titel.split("auf die")[0].strip()
                 break
         return {"reply": eintrag_erstellen(titel if titel else user_msg)}
 
