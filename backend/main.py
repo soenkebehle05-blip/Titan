@@ -34,13 +34,11 @@ class ChatRequest(BaseModel):
 # ---------------------------------------------------------
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-# Speichert das Zugriffs-Token temporär im Speicher
 USER_CREDENTIALS = None
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 def get_google_flow(request: Request):
-    # Dynamische Callback-URL basierend auf deinem Render-Host
     redirect_uri = str(request.url_for('auth_callback'))
     if redirect_uri.startswith("http://"):
         redirect_uri = redirect_uri.replace("http://", "https://")
@@ -87,7 +85,6 @@ async def auth_callback(request: Request, code: str):
         'client_secret': credentials.client_secret,
         'scopes': credentials.scopes
     }
-    # Nach Erfolg Weiterleitung zurück zur Frontend-App
     return RedirectResponse(url="/")
 
 
@@ -265,4 +262,43 @@ async def chat(req: ChatRequest):
         return {"reply": kalender_termin_eintragen(titel if titel else "Wichtiger Termin")}
 
     # 3. Notion Schlüsselwörter
-    if any(kw in user_msg_lower for kw in
+    if any(kw in user_msg_lower for kw in ["welche notizen", "notion auslesen", "to-do-liste", "was steht auf meiner liste", "liste vorlesen"]):
+        return {"reply": eintraege_auslesen()}
+
+    if any(kw in user_msg_lower for kw in ["schreibe auf die", "auf meine liste", "neuer eintrag", "schreib"]):
+        titel = user_msg
+        for kw in ["schreibe auf die liste", "auf meine liste", "schreib"]:
+            if kw in user_msg_lower:
+                titel = user_msg_lower.split(kw)[-1].strip(" :")
+                break
+        return {"reply": eintrag_erstellen(titel if titel else user_msg)}
+
+    # 4. KI-System-Prompt
+    system_instruction = (
+        "Du bist TITAN, ein hochintelligenter Sprachassistent. "
+        "Platziere die Anrede 'Sir' AUSNAHMSLOS AN DEN ANFANG deiner Antwort. "
+        "Antworte EXTREM KURZ UND DIREKT IN EINEM EINZIGEN SATZ. "
+        "Nenne Uhrzeit, Datum oder Wetter NUR, wenn der Nutzer explizit danach fragt.\n\n"
+        f"Hintergrund-Informationen (NUR bei expliziter Nachfrage nennen):\n"
+        f"- Uhrzeit/Datum: {datum_uhrzeit_str}\n"
+    )
+
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        return {"reply": "Sir, GROQ_API_KEY fehlt auf Render."}
+
+    try:
+        client = Groq(api_key=api_key)
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": user_msg}
+            ],
+            model="llama-3.3-70b-versatile",
+            max_tokens=70
+        )
+        reply = chat_completion.choices[0].message.content
+    except Exception as e:
+        reply = f"Sir, es gab einen Fehler: {str(e)}"
+
+    return {"reply": reply}
