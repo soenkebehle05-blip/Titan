@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 requests
-groq
 pydantic
-notion-client
+groq
+google-auth-oauthlib
+google-api-python-client
