@@ -39,9 +39,8 @@ USER_CREDENTIALS = None
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 def get_google_flow(request: Request):
-    redirect_uri = str(request.url_for('auth_callback'))
-    if redirect_uri.startswith("http://"):
-        redirect_uri = redirect_uri.replace("http://", "https://")
+    # Fest eingetragene HTTPS-Adresse für Render
+    redirect_uri = "https://titan-q6vn.onrender.com/auth/callback"
         
     client_config = {
         "web": {
